@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobq SET status = 'PROCESSING', started_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8db7c6f9f33ede9434734bc7215828ec6ed99e2ff93f5df6a93e298cda74a70c"
+}

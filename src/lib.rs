@@ -49,6 +49,7 @@ pub struct Job {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, sqlx::Type)]
+#[sqlx(type_name = "status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Status {
     Queued,
     Processing,
@@ -57,6 +58,7 @@ pub enum Status {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, sqlx::Type)]
+#[sqlx(type_name = "priority_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Priority {
     High,
     Normal,

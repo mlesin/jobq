@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobq SET status = 'COMPLETED', duration = extract(epoch from now() - started_at) WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5940710dcac7eac1fba14d947a18f85d078d3a4c8853f851b5f9dc7954c5cbb6"
+}

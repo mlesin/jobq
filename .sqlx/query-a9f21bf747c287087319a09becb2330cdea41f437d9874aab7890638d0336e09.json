@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO jobq (name, username, uuid, params, priority, status) VALUES ($1, $2, $3, $4, $5, 'QUEUED') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Jsonb",
+        {
+          "Custom": {
+            "name": "priority_enum",
+            "kind": {
+              "Enum": [
+                "HIGH",
+                "NORMAL",
+                "LOW"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a9f21bf747c287087319a09becb2330cdea41f437d9874aab7890638d0336e09"
+}

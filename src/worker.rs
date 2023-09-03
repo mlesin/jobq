@@ -5,7 +5,7 @@ use futures::{channel::mpsc::unbounded, future::ready, SinkExt, StreamExt};
 use log::*;
 use std::time::Duration;
 use tmq::{dealer, Context, Multipart};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 #[async_trait]
 pub trait Worker: Sized {
@@ -41,7 +41,7 @@ pub trait Worker: Sized {
                 if let Err(err) = ping_sender.send(ServerMessage::Hello).await {
                     error!("Error:{}", err);
                 };
-                delay_for(Duration::from_millis(10000)).await;
+                sleep(Duration::from_millis(10000)).await;
             }
         });
 
@@ -84,7 +84,7 @@ impl Worker for TestWorker {
     const JOB_NAME: &'static str = "test";
 
     async fn process(&self, job: Job) -> Result<(), Error> {
-        delay_for(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(100)).await;
         if job.id % 12 == 0 {
             return Err(anyhow!("Simulating failure"));
         }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobq SET status = 'FAILED', duration = extract(epoch from now() - started_at), error = $1 WHERE id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0a5594fb2f90174aeeb4e3f92c3bc47aa7c70f1bf6f56f13ce1e43147ee4e4d3"
+}

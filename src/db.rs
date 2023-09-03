@@ -1,6 +1,7 @@
-use crate::{Job, JobRequest};
+use crate::{Job, JobRequest, Priority};
 use anyhow::Error;
-use sqlx::postgres::{PgPool, PgQueryAs};
+use log::debug;
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Executor;
 use std::sync::Arc;
 
@@ -11,9 +12,9 @@ pub struct DbHandle {
 
 impl DbHandle {
     pub(crate) async fn new(url: &str) -> Result<Self, Error> {
-        let pool = PgPool::builder()
-            .max_size(5) // maximum number of connections in the pool
-            .build(&url)
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
             .await?;
 
         (&pool).execute(include_str!("setup.sql")).await?;
@@ -24,75 +25,93 @@ impl DbHandle {
     }
 
     pub(crate) async fn complete_job(&self, id: i64) -> Result<(), Error> {
-        let query = "update jobq set status = 'Completed', duration = extract(epoch from now() - \"time\") where id = $1";
-
-        sqlx::query(query).bind(&id).execute(&*self.pool).await?;
+        sqlx::query!(
+            "UPDATE jobq \
+                SET status = 'COMPLETED', \
+                duration = extract(epoch from now() - started_at) \
+            WHERE id = $1",
+            &id
+        )
+        .execute(&*self.pool)
+        .await?;
 
         Ok(())
     }
 
     pub(crate) async fn fail_job(&self, id: i64, msg: String) -> Result<(), Error> {
-        let query = "update jobq set status = 'Failed', duration = extract(epoch from now() - \"time\"), error = $1 where id = $2";
-
-        sqlx::query(query)
-            .bind(&msg)
-            .bind(&id)
-            .execute(&*self.pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE jobq \
+                SET status = 'FAILED', \
+                duration = extract(epoch from now() - started_at), \
+                error = $1 \
+            WHERE id = $2",
+            &msg,
+            &id
+        )
+        .execute(&*self.pool)
+        .await?;
 
         Ok(())
     }
 
     pub(crate) async fn begin_job(&self, id: i64) -> Result<(), Error> {
-        let query = "update jobq set status = 'Processing', time = now() where id = $1";
-
-        sqlx::query(query).bind(&id).execute(&*self.pool).await?;
+        sqlx::query!(
+            "UPDATE jobq \
+                SET status = 'PROCESSING', \
+                started_at = now() \
+            WHERE id = $1",
+            &id
+        )
+        .execute(&*self.pool)
+        .await?;
 
         Ok(())
     }
 
     pub(crate) async fn get_processing_jobs(&self) -> Result<Vec<Job>, Error> {
-        let query = "select id, name, username, uuid, params, priority, status from jobq
-                     where status = 'Processing' order by priority asc, time asc";
-
-        Ok(sqlx::query_as(query).fetch_all(&*self.pool).await?)
+        debug!("Getting processing jobs");
+        Ok(sqlx::query_as!(
+            Job,
+            "SELECT id, name, username, uuid, params, priority as \"priority: _\", status as \"status: _\" \
+            FROM jobq \
+            WHERE status = 'PROCESSING' \
+            ORDER BY priority asc, started_at asc"
+        )
+        .fetch_all(&*self.pool)
+        .await?)
     }
 
     pub(crate) async fn get_queued_jobs(&self, num: i64) -> Result<Vec<Job>, Error> {
-        let query = "select 
-                        id,
-                        name,
-                        username,
-                        uuid,
-                        params,
-                        priority,
-                        status
-                     from jobq
-                     where 
-                        status = 'Queued'
-                     order by
-                     priority asc, time asc
-                     limit $1";
-
-        Ok(sqlx::query_as(query)
-            .bind(&num)
-            .fetch_all(&*self.pool)
-            .await?)
+        debug!("Getting {} queued jobs", num);
+        Ok(sqlx::query_as!(
+            Job,
+            "SELECT id, name, username, uuid, params, priority as \"priority: _\", status as \"status: _\" \
+            FROM jobq \
+            WHERE status = 'QUEUED' \
+            ORDER BY priority asc, started_at asc \
+            LIMIT $1",
+            &num
+        )
+        .fetch_all(&*self.pool)
+        .await?)
     }
 
     pub(crate) async fn submit_job_request(&self, job: &JobRequest) -> Result<i64, Error> {
-        let query =
-            "INSERT into jobq (name, username, uuid, params, priority, status) values ($1, $2, $3, $4, $5, 'Queued') returning id";
+        debug!("Submitting job {:?}", job);
+        let result = sqlx::query_scalar!(
+            "INSERT INTO jobq \
+            (name, username, uuid, params, priority, status) \
+            VALUES ($1, $2, $3, $4, $5, 'QUEUED') \
+            RETURNING id",
+            &job.name,
+            &job.username,
+            &job.uuid,
+            &job.params,
+            &job.priority as &Priority
+        )
+        .fetch_one(&*self.pool)
+        .await?;
 
-        let result: (i64,) = sqlx::query_as(query)
-            .bind(&job.name)
-            .bind(&job.username)
-            .bind(&job.uuid)
-            .bind(&job.params)
-            .bind(&job.priority)
-            .fetch_one(&*self.pool)
-            .await?;
-
-        Ok(result.0)
+        Ok(result)
     }
 }

@@ -8,7 +8,7 @@ use tmq::{dealer, Context, Multipart, TmqError};
 use uuid::Uuid;
 
 use std::time::Duration;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 use jobq::server::Server;
 use jobq::worker::{TestWorker, Worker};
@@ -68,7 +68,7 @@ async fn setup() -> Result<(), Error> {
         }
     });
 
-    delay_for(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
 
     let worker_config = config.clone();
 
@@ -89,7 +89,7 @@ async fn setup() -> Result<(), Error> {
     if let ClientMessage::Hello = get_message(&mut recv).await? {
         debug!("Received Hello response, sending a couple of jobs");
 
-        for i in 0..500 {
+        for i in 0..20 {
             let priority = if i % 2 == 0 {
                 Priority::High
             } else {
