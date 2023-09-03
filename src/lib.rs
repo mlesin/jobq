@@ -1,16 +1,16 @@
-use anyhow::Error;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
-use tmq::{Message, Multipart};
 use uuid::Uuid;
 
 pub mod db;
+pub mod dealer;
+pub mod router;
 pub mod server;
 pub mod worker;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ServerMessage {
-    Hello,
+    Hello(String),
     Request(JobRequest),
     Completed(Job),
     Failed(Job, String),
@@ -18,14 +18,9 @@ pub enum ServerMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientMessage {
-    Hello,
-    Acknowledged(Job),
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum WorkerMessage {
-    Hello,
+    Hello(String),
     Order(Job),
+    Acknowledged(Job),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -63,24 +58,4 @@ pub enum Priority {
     High,
     Normal,
     Low,
-}
-
-pub trait ToMpart {
-    fn to_mpart(&self) -> Result<Multipart, Error>;
-
-    fn to_msg(&self) -> Result<Message, Error>;
-}
-
-impl<T: serde::ser::Serialize> ToMpart for T {
-    fn to_mpart(&self) -> Result<Multipart, Error> {
-        let bytes = serde_cbor::to_vec(&self)?;
-
-        Ok(Multipart::from(vec![&bytes]))
-    }
-
-    fn to_msg(&self) -> Result<Message, Error> {
-        let bytes = serde_cbor::to_vec(&self)?;
-
-        Ok(Message::from(&bytes))
-    }
 }
