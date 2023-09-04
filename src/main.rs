@@ -1,38 +1,37 @@
 use anyhow::Error;
+use clap::Parser;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use log::*;
 use serde_json::Value;
 use std::env;
-use structopt::StructOpt;
-use uuid::Uuid;
-
 use std::time::Duration;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 use jobq::server::Server;
 use jobq::worker::{TestWorker, Worker};
 use jobq::{dealer::Dealer, ClientMessage, JobRequest, Priority, ServerMessage};
 
-#[derive(StructOpt, Clone, Debug, PartialEq)]
-#[structopt(name = "jobq", about = "ZeroMQ Job Queue")]
+#[derive(Parser, Clone, Debug, PartialEq)]
+#[command(author, version)]
 pub struct ConfigContext {
-    #[structopt(
-        short = "c",
+    #[arg(
+        short = 'c',
         long = "connect_url",
         help = "PostgreSQL Connection URL",
         default_value = "postgres://jobq:jobq@127.0.0.1"
     )]
     connect_url: String,
 
-    #[structopt(
-        short = "l",
+    #[arg(
+        short = 'l',
         long = "listen_address",
         help = "Jobq Listen Address",
         default_value = "127.0.0.1:8888"
     )]
     job_address: String,
-    #[structopt(
-        short = "n",
+    #[arg(
+        short = 'n',
         long = "number_active",
         help = "Number of Active Jobs in Parallel",
         default_value = "4"
@@ -41,7 +40,7 @@ pub struct ConfigContext {
 }
 
 async fn setup() -> Result<(), Error> {
-    let config = ConfigContext::from_args();
+    let config = ConfigContext::parse();
 
     let server = Server::new(
         config.connect_url.clone(),
