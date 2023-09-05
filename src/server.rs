@@ -1,8 +1,9 @@
 use crate::{db::DbHandle, router::Router, ClientMessage, Job, ServerMessage, Status};
 use anyhow::Error;
 use futures::StreamExt;
-use log::*;
+use tracing::*;
 
+#[derive(Debug)]
 pub struct Server {
     connect_url: String,
     job_address: String,
@@ -20,6 +21,7 @@ impl Server {
 }
 
 impl Server {
+    #[instrument(level = "info")]
     pub async fn serve(&self) -> Result<(), Error> {
         trace!("Connecting to db:{}", self.connect_url);
         let handle = DbHandle::new(&self.connect_url).await?;
@@ -38,7 +40,9 @@ impl Server {
                 Ok(ServerMessage::Hello(name)) => {
                     debug!("Ping: {}", name);
 
-                    router.send_message(&name, ClientMessage::Hello(name.clone())).await?;
+                    router
+                        .send_message(&name, ClientMessage::Hello(name.clone()))
+                        .await?;
 
                     //Drain out existing processing jobs
                     let (jobs, outstanding): (Vec<Job>, Vec<Job>) =
@@ -49,8 +53,6 @@ impl Server {
                     for job in jobs {
                         send_job(&handle, job, &mut router).await?;
                     }
-
-
                 }
                 Ok(ServerMessage::Request(job_request)) => {
                     let id = handle.submit_job_request(&job_request).await?;
@@ -99,6 +101,7 @@ impl Server {
     }
 }
 
+// #[instrument(level = "info", skip(job, handle, router), fields(job_id = %job.id))]
 async fn send_job(handle: &DbHandle, job: Job, router: &mut Router) -> Result<(), Error> {
     handle.begin_job(job.id).await?;
     let name = &job.name;

@@ -1,11 +1,18 @@
 use anyhow::Error;
 use clap::Parser;
 use futures::{SinkExt, StreamExt, TryStreamExt};
-use log::*;
+use jobq::telemetry;
+
 use serde_json::Value;
 use std::env;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::{
+    join,
+    signal::unix::{signal, SignalKind},
+    time::sleep,
+};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info_span, instrument, Instrument};
 use uuid::Uuid;
 
 use jobq::server::Server;
@@ -39,7 +46,8 @@ pub struct ConfigContext {
     num: usize,
 }
 
-async fn setup() -> Result<(), Error> {
+#[instrument(level = "info", name = "setup", skip(token))]
+async fn setup(token: CancellationToken) -> Result<(), Error> {
     let config = ConfigContext::parse();
 
     let server = Server::new(
@@ -48,70 +56,122 @@ async fn setup() -> Result<(), Error> {
         config.num,
     );
 
-    tokio::spawn(async move {
-        if let Err(err) = server.serve().await {
-            error!("Error starting server: {}", err);
+    let server_spawn = {
+        let cloned_token = token.clone();
+        tokio::spawn(
+            async move {
+                tokio::select! {
+                    _ = cloned_token.cancelled() => {
+                        debug!("Cancelled");
+                    },
+                    r = server.serve() => {
+                        if let Err(err) = r {
+                            error!("Error starting server: {}", err);
+                        }
+                    },
+                }
+            }
+            .instrument(info_span!("server")),
+        )
+    };
+
+    sleep(Duration::from_millis(500)).await;
+
+    let worker_spawn = {
+        let worker_config = config.clone();
+        let cloned_token = token.clone();
+        tokio::spawn(
+            async move {
+                tokio::select! {
+                    _ = cloned_token.cancelled() => {
+                        debug!("Cancelled");
+                    },
+                    r = TestWorker.work(&worker_config.job_address) => {
+                        if let Err(err) = r {
+                            error!("Error starting worker: {}", err);
+                        }
+                    },
+                }
+            }
+            .instrument(info_span!("worker")),
+        )
+    };
+
+    {
+        let span = info_span!("dealer");
+        let _ = span.enter();
+        let (mut send, mut recv) = Dealer::new(&config.job_address).await?.split();
+
+        //Send hello
+        send.send(ServerMessage::Hello("Test Client".into()))
+            .await?;
+
+        debug!("Hello sent");
+
+        if let Some(ClientMessage::Hello(_name)) = recv.try_next().await? {
+            debug!("Received Hello response, sending a couple of jobs");
+
+            for i in 0..20 {
+                let priority = if i % 2 == 0 {
+                    Priority::High
+                } else {
+                    Priority::Normal
+                };
+
+                let job = JobRequest {
+                    name: "test".into(),
+                    username: "test_client".into(),
+                    params: Value::Null,
+                    uuid: Uuid::new_v4(),
+                    priority,
+                };
+
+                send.send(ServerMessage::Request(job)).await?;
+            }
+
+            debug!("Done!");
         }
-    });
 
-    sleep(Duration::from_secs(1)).await;
-
-    let worker_config = config.clone();
-
-    tokio::spawn(async move {
-        if let Err(err) = TestWorker.work(&worker_config.job_address).await {
-            error!("Error starting worker: {}", err);
+        {
+            let span = info_span!("recv");
+            let _ = span.enter();
+            while let Some(message) = recv.try_next().await? {
+                debug!("Message:{:?}", message);
+            }
         }
-    });
-
-    let (mut send, mut recv) = Dealer::new(&config.job_address).await?.split();
-
-    //Send hello
-    send.send(ServerMessage::Hello("Test Client".into()))
-        .await?;
-
-    debug!("Hello sent");
-
-    if let Some(ClientMessage::Hello(_name)) = recv.try_next().await? {
-        debug!("Received Hello response, sending a couple of jobs");
-
-        for i in 0..20 {
-            let priority = if i % 2 == 0 {
-                Priority::High
-            } else {
-                Priority::Normal
-            };
-
-            let job = JobRequest {
-                name: "test".into(),
-                username: "test_client".into(),
-                params: Value::Null,
-                uuid: Uuid::new_v4(),
-                priority,
-            };
-
-            send.send(ServerMessage::Request(job)).await?;
-        }
-
-        debug!("Done!");
     }
 
-    while let Some(message) = recv.try_next().await? {
-        debug!("Message:{:?}", message);
-    }
+    let (srv, wrk) = join!(server_spawn, worker_spawn);
+    srv?;
+    wrk?;
 
     Ok(())
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "jobq=DEBUG");
     }
 
-    pretty_env_logger::init_timed();
+    telemetry::init()?;
 
-    if let Err(err) = setup().await {
-        error!("{}", err);
-    }
+    let token = CancellationToken::new();
+
+    let cloned_token = token.clone();
+    let app = tokio::spawn(setup(cloned_token));
+
+    tokio::spawn(async move {
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        tokio::select! {
+            _ = sigterm.recv() => {println!("Received SIGTERM"); token.cancel()},
+            _ = sigint.recv() => {println!("Received SIGINT"); token.cancel()},
+        }
+    });
+    app.await??;
+    println!("Shutting down.");
+    telemetry::shutdown();
+
+    Ok(())
 }

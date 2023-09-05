@@ -34,6 +34,7 @@ impl Dealer {
 impl Stream for Dealer {
     type Item = Result<ClientMessage, Error>;
 
+    // #[instrument(level = "info", name = "dealer_poll_next", skip(self))]
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let self_mut = &mut self.as_mut();
 
@@ -48,6 +49,7 @@ impl Stream for Dealer {
 impl Sink<ServerMessage> for Dealer {
     type Error = Error;
 
+    // #[instrument(level = "info", name = "dealer_poll_ready", skip(self))]
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let self_mut = &mut self.as_mut();
         match Pin::new(&mut self_mut.connection).poll_ready(cx) {
@@ -56,10 +58,13 @@ impl Sink<ServerMessage> for Dealer {
         }
     }
 
+    // #[instrument(level = "info", name = "dealer_start_send", skip(self))]
     fn start_send(mut self: Pin<&mut Self>, item: ServerMessage) -> Result<(), Self::Error> {
         let self_mut = &mut self.as_mut();
         Ok(Pin::new(&mut self_mut.connection).start_send(item)?)
     }
+
+    // #[instrument(level = "info", name = "dealer_poll_flush", skip(self))]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let self_mut = &mut self.as_mut();
         match Pin::new(&mut self_mut.connection).poll_flush(cx) {
@@ -67,6 +72,8 @@ impl Sink<ServerMessage> for Dealer {
             Poll::Pending => Poll::Pending,
         }
     }
+
+    // #[instrument(level = "info", name = "dealer_poll_close", skip(self))]
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let self_mut = &mut self.as_mut();
         match Pin::new(&mut self_mut.connection).poll_close(cx) {

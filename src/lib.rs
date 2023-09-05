@@ -6,6 +6,7 @@ pub mod db;
 pub mod dealer;
 pub mod router;
 pub mod server;
+pub mod telemetry;
 pub mod worker;
 
 #[derive(Serialize, Deserialize, Debug)]

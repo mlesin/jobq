@@ -1,5 +1,10 @@
 version: "3.8"
 
+volumes:
+  postgres-data:
+  qwdata:
+  grafana-storage:
+
 services:
   db:
     image: postgres:15-bullseye
@@ -10,9 +15,43 @@ services:
       POSTGRES_DB: jobq
       POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=en-US-u-kn-true"
     ports:
-      - 5432:5432
+      - 35432:5432
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-volumes:
-  postgres-data:
+  quickwit:
+    image: quickwit/quickwit:latest
+    command: run
+    restart: always
+    environment:
+      QW_ENABLE_OTLP_ENDPOINT: true
+      QW_ENABLE_JAEGER_ENDPOINT: true
+    ports:
+      - "7280:7280"
+      - "7281:7281"
+    volumes:
+      - qwdata:/quickwit/qwdata
+
+  jaeger:
+    image: jaegertracing/jaeger-query:latest
+    restart: always
+    depends_on:
+      - quickwit
+    environment:
+      SPAN_STORAGE_TYPE: "grpc-plugin"
+      GRPC_STORAGE_SERVER: "quickwit:7281"
+    ports:
+      - "16686:16686"
+
+  grafana:
+    image: grafana/grafana-enterprise:latest
+    restart: always
+    user: root
+    depends_on:
+      - quickwit
+    environment:
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "quickwit-quickwit-datasource"
+    ports:
+      - "3003:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana

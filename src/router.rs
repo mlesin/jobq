@@ -4,12 +4,12 @@ use tokio_serde::{formats::Cbor, Framed};
 use crate::{ClientMessage, ServerMessage};
 use anyhow::{anyhow, Error};
 use futures::{SinkExt, Stream};
-use log::*;
 use std::mem;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio_util::codec::{Framed as CodecFramed, LengthDelimitedCodec};
+use tracing::{debug, error, trace, warn};
 
 type ServerFramed = Framed<
     CodecFramed<TcpStream, LengthDelimitedCodec>,

@@ -2,16 +2,17 @@ use crate::{dealer::Dealer, ClientMessage, Job, ServerMessage};
 use anyhow::{anyhow, Error};
 use async_trait::async_trait;
 use futures::{channel::mpsc::unbounded, future::ready, SinkExt, StreamExt};
-use log::*;
-use std::time::Duration;
+use std::{fmt::Debug, time::Duration};
 use tokio::time::sleep;
+use tracing::*;
 
 #[async_trait]
-pub trait Worker: Sized {
+pub trait Worker: Sized + Debug {
     const JOB_NAME: &'static str;
 
     async fn process(&self, job: Job) -> Result<(), Error>;
 
+    #[instrument(level = "info")]
     async fn work(&self, job_address: &str) -> Result<(), Error> {
         let job_type = Self::JOB_NAME;
         debug!("Worker `{}` starting, sending hello", job_type);
@@ -72,12 +73,15 @@ pub trait Worker: Sized {
         Ok(())
     }
 }
+
+#[derive(Debug)]
 pub struct TestWorker;
 
 #[async_trait]
 impl Worker for TestWorker {
     const JOB_NAME: &'static str = "test";
 
+    #[instrument(level = "info", skip(job), fields(job_id = %job.id))]
     async fn process(&self, job: Job) -> Result<(), Error> {
         sleep(Duration::from_millis(100)).await;
         if job.id % 12 == 0 {
