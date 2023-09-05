@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 pub mod db;
 pub mod server;
+pub mod telemetry;
 pub mod worker;
 
 #[derive(Serialize, Deserialize, Debug)]

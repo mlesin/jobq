@@ -24,6 +24,32 @@
 
   // Configure tool-specific properties.
   // "customizations": {},
+  "customizations": {
+	  "vscode": {
+		  "extensions": [
+        "mhutchie.git-graph",
+        "donjayamanne.githistory",
+        "codezombiech.gitignore",
+        "christian-kohler.path-intellisense",
+        "hbenl.vscode-test-explorer",
+        "pflannery.vscode-versionlens",
+        "VisualStudioExptTeam.vscodeintellicode",
+        "mrmlnc.vscode-duplicate",
+        "Gruntfuggly.todo-tree",
+        "redhat.vscode-yaml",
+        "ms-vscode.test-adapter-converter",
+        "DavidAnson.vscode-markdownlint",
+        "waderyan.gitblame",
+        "eamodio.gitlens",
+        "rust-lang.rust-analyzer",
+        "Swellaby.vscode-rust-test-adapter",
+        "tamasfe.even-better-toml",
+        "belfz.search-crates-io",
+        "Codeium.codeium",
+        "citreae535.sparse-crates"
+		  ]
+	  }
+  },
 
   // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
   // "remoteUser": "root"

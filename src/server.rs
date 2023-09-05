@@ -1,10 +1,11 @@
 use crate::{db::DbHandle, ClientMessage, Job, ServerMessage, Status, ToMpart, WorkerMessage};
 use anyhow::Error;
 use futures::{Sink, SinkExt, StreamExt, TryStreamExt};
-use log::*;
 use tmq::TmqError;
 use tmq::{router, Context, Message, Multipart};
+use tracing::*;
 
+#[derive(Debug)]
 pub struct Server {
     connect_url: String,
     job_address: String,
@@ -22,6 +23,7 @@ impl Server {
 }
 
 impl Server {
+    #[instrument(level = "info")]
     pub async fn serve(&self) -> Result<(), Error> {
         trace!("Connecting to db:{}", self.connect_url);
         let handle = DbHandle::new(&self.connect_url).await?;
