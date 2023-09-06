@@ -23,7 +23,7 @@ impl Server {
 }
 
 impl Server {
-    #[instrument(level = "info")]
+    // #[instrument(level = "info")]
     pub async fn serve(&self) -> Result<(), Error> {
         trace!("Connecting to db:{}", self.connect_url);
         let handle = DbHandle::new(&self.connect_url).await?;
@@ -50,7 +50,7 @@ impl Server {
 
                         //Drain out existing processing jobs
                         let (jobs, outstanding): (Vec<Job>, Vec<Job>) =
-                            processing.into_iter().partition(|job| job.name == name);
+                            processing.into_iter().partition(|job| job.mimetype == name);
 
                         processing = outstanding;
 
@@ -73,15 +73,16 @@ impl Server {
 
                     let job = Job {
                         id,
-                        name: job_request.name,
-                        username: job_request.username,
-                        uuid: job_request.uuid,
-                        priority: job_request.priority,
-                        params: job_request.params,
+                        project_id: job_request.project_id,
+                        post_id: job_request.post_id,
+                        filename: job_request.filename,
+                        hash: job_request.hash,
+                        mimetype: job_request.mimetype,
+                        sort_order: job_request.sort_order,
                         status: Status::Queued,
                     };
 
-                    debug!("New: {:?}", job);
+                    debug!(message="New job", job_id = ?job.id);
 
                     send.send(
                         vec![
@@ -133,7 +134,7 @@ async fn send_job<S: Sink<Multipart, Error = TmqError> + Unpin>(
 
     send.send(
         vec![
-            Message::from(job.name.as_bytes()),
+            Message::from(job.mimetype.as_bytes()),
             WorkerMessage::Order(job).to_msg()?,
         ]
         .into(),

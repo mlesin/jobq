@@ -3,10 +3,9 @@ use clap::Parser;
 use futures::{SinkExt, StreamExt, TryStream, TryStreamExt};
 use jobq::telemetry;
 
-use serde_json::Value;
 use std::env;
 use tmq::{dealer, Context, Multipart, TmqError};
-use uuid::Uuid;
+use uuid::uuid;
 
 use std::time::Duration;
 use tokio::{
@@ -15,11 +14,11 @@ use tokio::{
     time::sleep,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info_span, instrument, Instrument};
+use tracing::{debug, error, event, info_span, instrument, Instrument, Level};
 
 use jobq::server::Server;
 use jobq::worker::{TestWorker, Worker};
-use jobq::{ClientMessage, JobRequest, Priority, ServerMessage, ToMpart};
+use jobq::{ClientMessage, JobRequest, ServerMessage, ToMpart};
 
 #[derive(Parser, Clone, Debug, PartialEq)]
 #[command(author, version)]
@@ -43,11 +42,12 @@ pub struct ConfigContext {
         short = 'n',
         long = "number_active",
         help = "Number of Active Jobs in Parallel",
-        default_value = "4"
+        default_value = "2"
     )]
     num: usize,
 }
 
+#[instrument(skip_all, fields(message, job_id))]
 async fn try_get_message<S: TryStream<Ok = Multipart, Error = TmqError> + Unpin>(
     recv: &mut S,
     token: CancellationToken,
@@ -55,21 +55,29 @@ async fn try_get_message<S: TryStream<Ok = Multipart, Error = TmqError> + Unpin>
     tokio::select! {
         _ = token.cancelled() => {
             debug!("Cancelled");
-            return Ok(None);
+            Ok(None)
         },
         r = recv.try_next() => {
             if let Some(msg) = r? {
                 let jobq_message: ClientMessage = serde_cbor::from_slice(&msg[0])?;
-
-                return Ok(Some(jobq_message))
+                match &jobq_message {
+                    ClientMessage::Hello => {
+                        tracing::Span::current().record("message", "Hello");
+                    },
+                    ClientMessage::Acknowledged(job) => {
+                        tracing::Span::current().record("message", "Acknowledged");
+                        tracing::Span::current().record("job_id", job.id.to_string());
+                    },
+                };
+                Ok(Some(jobq_message))
             } else {
-                return Ok(None)
+                Ok(None)
             }
         },
     }
 }
 
-#[instrument(level = "info", name = "setup", skip(token))]
+#[instrument(skip(token))]
 async fn setup(token: CancellationToken) -> Result<(), Error> {
     let config = ConfigContext::parse();
 
@@ -94,6 +102,7 @@ async fn setup(token: CancellationToken) -> Result<(), Error> {
                     },
                 }
             }
+            // .in_current_span(),
             .instrument(info_span!("server")),
         )
     };
@@ -116,13 +125,14 @@ async fn setup(token: CancellationToken) -> Result<(), Error> {
                     },
                 }
             }
+            // .in_current_span(),
             .instrument(info_span!("worker")),
         )
     };
 
     {
-        let span = info_span!("dealer");
-        let _ = span.enter();
+        // let span = info_span!("dealer");
+        // let _ = span.enter();
         let (mut send, mut recv) = dealer(&Context::new())
             .set_identity(b"test_client")
             .connect(&config.job_address)?
@@ -134,19 +144,14 @@ async fn setup(token: CancellationToken) -> Result<(), Error> {
         if let Some(ClientMessage::Hello) = try_get_message(&mut recv, token.clone()).await? {
             debug!("Received Hello response, sending a couple of jobs");
 
-            for i in 0..20 {
-                let priority = if i % 2 == 0 {
-                    Priority::High
-                } else {
-                    Priority::Normal
-                };
-
+            for _ in 0..6 {
                 let job = JobRequest {
-                    name: "test".into(),
-                    username: "test_client".into(),
-                    params: Value::Null,
-                    uuid: Uuid::new_v4(),
-                    priority,
+                    project_id: uuid!("12341234-1234-1234-1234-123412341234"),
+                    post_id: uuid!("43214321-4321-4321-4321-432143214321"),
+                    filename: "test.jpg".into(),
+                    hash: "1234567890ABCDEF1234567890ABCDEF".into(),
+                    mimetype: "image/jpeg".into(),
+                    sort_order: 1,
                 };
 
                 send.send(ServerMessage::Request(job).to_mpart()?).await?;
@@ -156,10 +161,14 @@ async fn setup(token: CancellationToken) -> Result<(), Error> {
         }
 
         {
-            let span = info_span!("recv");
-            let _ = span.enter();
+            // let span = info_span!("recv");
+            // let _ = span.enter();
             while let Some(message) = try_get_message(&mut recv, token.clone()).await? {
-                debug!("Message:{:?}", message);
+                let msg = match message {
+                    ClientMessage::Acknowledged(job) => format!("Acknowledged({})", job.id),
+                    ClientMessage::Hello => "Hello".to_string(),
+                };
+                event!(Level::DEBUG, event = "Message", msg = ?msg);
             }
         }
     }

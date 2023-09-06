@@ -1,9 +1,10 @@
-use crate::{Job, JobRequest, Priority};
+use crate::{Job, JobRequest};
 use anyhow::Error;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Executor;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::instrument;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct DbHandle {
@@ -25,8 +26,8 @@ impl DbHandle {
         })
     }
 
-    // #[instrument(name = "db.set_completed", skip_all, fields(job_id = %id))]
-    pub(crate) async fn complete_job(&self, id: i64) -> Result<(), Error> {
+    #[instrument(name = "db.set_completed", skip_all, fields(job_id = %id))]
+    pub(crate) async fn complete_job(&self, id: Uuid) -> Result<(), Error> {
         sqlx::query!(
             "UPDATE jobq \
                 SET status = 'COMPLETED', \
@@ -40,8 +41,8 @@ impl DbHandle {
         Ok(())
     }
 
-    // #[instrument(name = "db.set_failed", skip_all, fields(job_id = %id, error = %msg))]
-    pub(crate) async fn fail_job(&self, id: i64, msg: String) -> Result<(), Error> {
+    #[instrument(name = "db.set_failed", skip_all, fields(job_id = %id, error = %msg))]
+    pub(crate) async fn fail_job(&self, id: Uuid, msg: String) -> Result<(), Error> {
         sqlx::query!(
             "UPDATE jobq \
                 SET status = 'FAILED', \
@@ -57,8 +58,8 @@ impl DbHandle {
         Ok(())
     }
 
-    // #[instrument(name = "db.set_processing", skip_all, fields(job_id = %id))]
-    pub(crate) async fn begin_job(&self, id: i64) -> Result<(), Error> {
+    #[instrument(name = "db.set_processing", skip_all, fields(job_id = %id))]
+    pub(crate) async fn begin_job(&self, id: Uuid) -> Result<(), Error> {
         sqlx::query!(
             "UPDATE jobq \
                 SET status = 'PROCESSING', \
@@ -72,29 +73,29 @@ impl DbHandle {
         Ok(())
     }
 
-    // #[instrument(name = "db.get_processing_jobs", skip_all)]
+    #[instrument(name = "db.get_processing_jobs", skip_all)]
     pub(crate) async fn get_processing_jobs(&self) -> Result<Vec<Job>, Error> {
-        debug!("Getting processing jobs");
+        // debug!("Getting processing jobs");
         Ok(sqlx::query_as!(
             Job,
-            "SELECT id, name, username, uuid, params, priority as \"priority: _\", status as \"status: _\" \
+            "SELECT id, project_id, post_id, filename, hash, mimetype, sort_order, status as \"status: _\" \
             FROM jobq \
             WHERE status = 'PROCESSING' \
-            ORDER BY priority asc, started_at asc"
+            ORDER BY started_at asc"
         )
         .fetch_all(&*self.pool)
         .await?)
     }
 
-    // #[instrument(name = "db.get_queued_jobs", skip_all, fields(limit = %num))]
+    #[instrument(name = "db.get_queued_jobs", skip_all, fields(limit = %num))]
     pub(crate) async fn get_queued_jobs(&self, num: i64) -> Result<Vec<Job>, Error> {
-        debug!("Getting {} queued jobs", num);
+        // debug!("Getting {} queued jobs", num);
         Ok(sqlx::query_as!(
             Job,
-            "SELECT id, name, username, uuid, params, priority as \"priority: _\", status as \"status: _\" \
+            "SELECT id, project_id, post_id, filename, hash, mimetype, sort_order, status as \"status: _\" \
             FROM jobq \
             WHERE status = 'QUEUED' \
-            ORDER BY priority asc, started_at asc \
+            ORDER BY started_at asc \
             LIMIT $1",
             &num
         )
@@ -102,24 +103,25 @@ impl DbHandle {
         .await?)
     }
 
-    // #[instrument(name = "db.submit_job_request", skip_all, fields(job_id))]
-    pub(crate) async fn submit_job_request(&self, job: &JobRequest) -> Result<i64, Error> {
-        debug!("Submitting job {:?}", job);
+    #[instrument(name = "db.submit_job_request", skip_all, fields(job_id))]
+    pub(crate) async fn submit_job_request(&self, job: &JobRequest) -> Result<Uuid, Error> {
+        // debug!("Submitting job");
         let result = sqlx::query_scalar!(
             "INSERT INTO jobq \
-            (name, username, uuid, params, priority, status) \
-            VALUES ($1, $2, $3, $4, $5, 'QUEUED') \
+            (project_id, post_id, filename, hash, mimetype, sort_order, status) \
+            VALUES ($1, $2, $3, $4, $5, $6, 'QUEUED') \
             RETURNING id",
-            &job.name,
-            &job.username,
-            &job.uuid,
-            &job.params,
-            &job.priority as &Priority
+            &job.project_id,
+            &job.post_id,
+            &job.filename,
+            &job.hash,
+            &job.mimetype,
+            &job.sort_order
         )
         .fetch_one(&*self.pool)
         .await?;
 
-        // tracing::Span::current().record("job_id", &result);
+        tracing::Span::current().record("job_id", &result.to_string());
         Ok(result)
     }
 }

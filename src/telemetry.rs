@@ -1,7 +1,11 @@
 use std::env;
 
 use opentelemetry::global;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{
+    fmt::{self, format},
+    prelude::*,
+    EnvFilter,
+};
 
 pub fn init() -> Result<(), Box<dyn std::error::Error>> {
     env::remove_var("http_proxy");
@@ -25,13 +29,16 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|_| EnvFilter::try_new("info"))
         .unwrap();
 
+    let event_layer =
+        fmt::layer().event_format(format().without_time().with_target(false).compact());
+
     // The SubscriberExt and SubscriberInitExt traits are needed to extend the
     // Registry to accept `opentelemetry (the OpenTelemetryLayer type).
     tracing_subscriber::registry()
         .with(telemetry)
         // Continue logging to stdout
         .with(filter_layer)
-        .with(fmt::Layer::default())
+        .with(event_layer)
         .try_init()?;
 
     Ok(())

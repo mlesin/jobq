@@ -1,6 +1,5 @@
 use anyhow::Error;
 use serde_derive::{Deserialize, Serialize};
-use serde_json::Value;
 use tmq::{Message, Multipart};
 use uuid::Uuid;
 
@@ -31,39 +30,33 @@ pub enum WorkerMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobRequest {
-    pub name: String,
-    pub username: String,
-    pub uuid: Uuid,
-    pub params: Value,
-    pub priority: Priority,
+    pub project_id: Uuid,
+    pub post_id: Uuid,
+    pub filename: String,
+    pub hash: String,
+    pub mimetype: String,
+    pub sort_order: i16,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, sqlx::FromRow)]
 pub struct Job {
-    pub id: i64,
-    pub username: String,
-    pub name: String,
-    pub uuid: Uuid,
-    pub params: Value,
-    pub priority: Priority,
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub post_id: Uuid,
+    pub filename: String,
+    pub hash: String,
+    pub mimetype: String,
+    pub sort_order: i16,
     pub status: Status,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, sqlx::Type)]
-#[sqlx(type_name = "status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
+#[sqlx(type_name = "queue_status_enum", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Status {
     Queued,
     Processing,
     Completed,
     Failed,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, sqlx::Type)]
-#[sqlx(type_name = "priority_enum", rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum Priority {
-    High,
-    Normal,
-    Low,
 }
 
 pub trait ToMpart {

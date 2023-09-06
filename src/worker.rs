@@ -13,7 +13,7 @@ pub trait Worker: Sized + Debug {
 
     async fn process(&self, job: Job) -> Result<(), Error>;
 
-    #[instrument(level = "info")]
+    // #[instrument(level = "info")]
     async fn work(&self, job_address: &str) -> Result<(), Error> {
         let job_type = Self::JOB_NAME;
         debug!("Worker `{}` starting, sending hello", job_type);
@@ -37,16 +37,20 @@ pub trait Worker: Sized + Debug {
 
         let mut ping_sender = send.clone();
 
-        tokio::spawn(async move {
-            loop {
-                if let Err(err) = ping_sender.send(ServerMessage::Hello).await {
-                    error!("Error:{}", err);
-                };
-                sleep(Duration::from_millis(10000)).await;
-            }
-        });
+        tokio::spawn(
+            async move {
+                loop {
+                    debug!("Sending ping");
+                    if let Err(err) = ping_sender.send(ServerMessage::Hello).await {
+                        error!("Error:{}", err);
+                    };
+                    sleep(Duration::from_millis(10000)).await;
+                }
+            }, // .instrument(info_span!("ping_sender")),
+        );
 
         recv.filter_map(|val| {
+            debug!(message = "Filtering", val=?val);
             match val
                 .map_err(Error::from)
                 .and_then(|msg| serde_cbor::from_slice(&msg[0]).map_err(Error::from))
@@ -69,6 +73,7 @@ pub trait Worker: Sized + Debug {
                 Err(err) => ServerMessage::Failed(job, err.to_string()),
             };
 
+            debug!(message = ?server_message, "Sending server message");
             if let Err(err) = send.send(server_message).await {
                 error!("Error sending server message: {}", err);
             }
@@ -86,10 +91,10 @@ pub struct TestWorker;
 impl Worker for TestWorker {
     const JOB_NAME: &'static str = "test";
 
-    #[instrument(level = "info", skip(job), fields(job_id = %job.id))]
+    #[instrument(skip(job), fields(job_id = %job.id))]
     async fn process(&self, job: Job) -> Result<(), Error> {
         sleep(Duration::from_millis(100)).await;
-        if job.id % 12 == 0 {
+        if job.id.as_u128() % 12 == 0 {
             return Err(anyhow!("Simulating failure"));
         }
 
