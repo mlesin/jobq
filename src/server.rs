@@ -1,144 +1,112 @@
-use crate::{db::DbHandle, ClientMessage, Job, ServerMessage, Status, ToMpart, WorkerMessage};
+use crate::worker::{self, WorkMessage};
+use crate::JobRequest;
+use crate::{db::DbHandle, Job};
 use anyhow::Error;
-use futures::{Sink, SinkExt, StreamExt, TryStreamExt};
-use tmq::TmqError;
-use tmq::{router, Context, Message, Multipart};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::*;
 
-#[derive(Debug)]
-pub struct Server {
+// #[instrument(level = "info")]
+pub async fn serve(
+    cancel_token: CancellationToken,
     connect_url: String,
-    job_address: String,
-    num: usize,
-}
-
-impl Server {
-    pub fn new(connect_url: String, job_address: String, num: usize) -> Self {
-        Server {
-            connect_url,
-            job_address,
-            num,
-        }
-    }
-}
-
-impl Server {
-    // #[instrument(level = "info")]
-    pub async fn serve(&self) -> Result<(), Error> {
-        trace!("Connecting to db:{}", self.connect_url);
-        let handle = DbHandle::new(&self.connect_url).await?;
-
-        let (mut send, mut recv) = router(&Context::new())
-            .bind(&self.job_address)?
-            .split::<Multipart>();
-
-        //Resubmit processing jobs
-        let mut processing = handle.get_processing_jobs().await?;
-
-        let mut active = processing.len();
-
-        while let Some(msg) = recv.try_next().await? {
-            let client_name = &msg[0];
-            let server_msg = serde_cbor::from_slice::<ServerMessage>(&msg[1]);
-
-            trace!("Active Jobs:{}", active);
-
-            match server_msg {
-                Ok(ServerMessage::Hello) => {
-                    if let Some(name) = client_name.as_str() {
-                        debug!("Ping: {}", name);
-
-                        //Drain out existing processing jobs
-                        let (jobs, outstanding): (Vec<Job>, Vec<Job>) =
-                            processing.into_iter().partition(|job| job.mimetype == name);
-
-                        processing = outstanding;
-
-                        for job in jobs {
-                            send_job(&handle, job, &mut send).await?;
-                        }
-                    }
-
-                    send.send(
-                        vec![
-                            Message::from(&client_name as &[u8]),
-                            ClientMessage::Hello.to_msg()?,
-                        ]
-                        .into(),
-                    )
-                    .await?;
-                }
-                Ok(ServerMessage::Request(job_request)) => {
-                    let id = handle.submit_job_request(&job_request).await?;
-
-                    let job = Job {
-                        id,
-                        project_id: job_request.project_id,
-                        post_id: job_request.post_id,
-                        filename: job_request.filename,
-                        hash: job_request.hash,
-                        mimetype: job_request.mimetype,
-                        sort_order: job_request.sort_order,
-                        status: Status::Queued,
-                    };
-
-                    debug!(message="New job", job_id = ?job.id);
-
-                    send.send(
-                        vec![
-                            Message::from(&client_name as &[u8]),
-                            ClientMessage::Acknowledged(job).to_msg()?,
-                        ]
-                        .into(),
-                    )
-                    .await?
-                }
-                Ok(ServerMessage::Completed(job)) => {
-                    trace!("Job completed:{}", job.id);
-                    handle.complete_job(job.id).await?;
-                    active = active - 1;
-                }
-                Ok(ServerMessage::Failed(job, reason)) => {
-                    warn!("Job failed: {}, Reason: {}", job.id, reason);
-                    handle.fail_job(job.id, reason).await?;
-                    active = active - 1;
-                }
-                Err(err) => {
-                    warn!("Could not deserialize message:{}", err);
-                }
-            }
-
-            //If we have less active tasks lets check the queued stuff
-            if active < self.num {
-                let jobs = handle
-                    .get_queued_jobs(self.num as i64 - active as i64)
-                    .await?;
-
-                for job in jobs {
-                    send_job(&handle, job, &mut send).await?;
-                    active = active + 1;
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-async fn send_job<S: Sink<Multipart, Error = TmqError> + Unpin>(
-    handle: &DbHandle,
-    job: Job,
-    send: &mut S,
+    workers_count: u16,
+    mut recv_from_client: mpsc::UnboundedReceiver<JobRequest>,
 ) -> Result<(), Error> {
-    handle.begin_job(job.id).await?;
+    trace!("Connecting to db:{}", connect_url);
+    let handle = DbHandle::new(&connect_url).await?;
 
-    send.send(
-        vec![
-            Message::from(job.mimetype.as_bytes()),
-            WorkerMessage::Order(job).to_msg()?,
-        ]
-        .into(),
-    )
-    .await?;
+    let (send_to_server, mut recv_from_worker) = mpsc::unbounded_channel::<WorkMessage>();
+    let (send_to_queue, recv_from_queue) = async_channel::bounded::<Job>(workers_count as usize);
+
+    let mut workers = vec![];
+    for _ in 0..workers_count {
+        let send_to_server = send_to_server.clone();
+        let cancel_token = cancel_token.clone();
+        let recv_from_queue = recv_from_queue.clone();
+        let join_handle = tokio::spawn(
+            async move {
+                worker::start(cancel_token, recv_from_queue, send_to_server).await;
+            }
+            .instrument(info_span!("worker")),
+        );
+        workers.push(join_handle);
+    }
+
+    let mut free_workers = workers_count as i64;
+
+    //TODO: Resubmit processing jobs (reset processing status to queued)
+    // let mut processing = handle.get_processing_jobs().await?;
+
+    loop {
+        if free_workers > 0 {
+            let jobs_to_process = handle.get_queued_jobs(free_workers).await?;
+            for job in jobs_to_process {
+                send_to_queue.send(job).await?;
+                free_workers -= 1;
+            }
+        }
+
+        // Waiting for something to else to happen to continue...
+        tokio::select! {
+            // Handle cancellation
+            _ = cancel_token.cancelled() => {
+                debug!("Server Cancelled");
+                break;
+            },
+            // Handle responses from workers
+            chan_msg = recv_from_worker.recv() => {
+                match chan_msg {
+                    None => {
+                        debug!("Worker channel closed unexpectedly, exiting");
+                        cancel_token.cancel();
+                        break;
+                    },
+                    Some(WorkMessage::Started(job_id)) => {
+                        debug!(message = "Starting job", job_id = ?job_id);
+                        // FIXME what to do in case of error?
+                        handle.begin_job(job_id).await?;
+                    },
+                    Some(WorkMessage::Completed(job_id)) => {
+                        debug!(message = "Completed job", job_id = ?job_id);
+                        free_workers += 1;
+                        // FIXME what to do in case of error?
+                        handle.complete_job(job_id).await?;
+                    },
+                    Some(WorkMessage::Failed(job_id, error_msg)) => {
+                        debug!(message = "Failed job", job_id = ?job_id, error = ?error_msg);
+                        free_workers += 1;
+                        // FIXME what to do in case of error?
+                        handle.fail_job(job_id, error_msg).await?;
+                    },
+                }
+            },
+            // Handle requests from clients
+            chan_msg = recv_from_client.recv() => {
+                match chan_msg {
+                    None => {
+                        debug!("Client channel closed unexpectedly, exiting");
+                        cancel_token.cancel();
+                        break;
+                    },
+                    Some(job_request) => {
+                        debug!(message = "Requested job", job_request = ?job_request);
+                        // FIXME respond with a job failed in case of database error
+                        handle.submit_job_request(&job_request).await?;
+                        // send_to_queue.send(job_request).await?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Wait for all workers to complete
+    futures::future::join_all(workers)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    debug!("Server stopped.");
+
     Ok(())
 }
