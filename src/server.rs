@@ -51,7 +51,21 @@ pub async fn serve(
         if free_workers > 0 {
             let jobs_to_process = handle.get_queued_jobs(free_workers).await?;
             for job in jobs_to_process {
-                send_to_queue.send(job).await?;
+                let result = handle.begin_job(job.id).await;
+                if let Err(err) = result {
+                    let result = send_to_client.send(WorkResponseMessage::DatabaseQueueError(err));
+                    if let Err(err) = result {
+                        error!(message = "Failed to send response to client", error = ?err);
+                        cancel_token.cancel();
+                        break;
+                    }
+                }
+                let result = send_to_queue.send(job).await;
+                if let Err(err) = result {
+                    error!(message = "Failed to send response to client", error = ?err);
+                    cancel_token.cancel();
+                    break;
+                }
                 free_workers -= 1;
             }
         }
@@ -70,18 +84,6 @@ pub async fn serve(
                         debug!("Worker channel closed unexpectedly, exiting");
                         cancel_token.cancel();
                         break;
-                    },
-                    Some(WorkMessage::JobStarted(job_id)) => {
-                        debug!(message = "Starting job", job_id = ?job_id);
-                        let result = handle.begin_job(job_id).await;
-                        if let Err(err) = result {
-                            let result = send_to_client.send(WorkResponseMessage::DatabaseQueueError(err));
-                            if let Err(err) = result {
-                                error!(message = "Failed to send response to client", error = ?err);
-                                cancel_token.cancel();
-                                break;
-                            }
-                        }
                     },
                     Some(WorkMessage::JobCompleted(job_id)) => {
                         debug!(message = "Completed job", job_id = ?job_id);

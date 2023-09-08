@@ -69,7 +69,7 @@ async fn setup(cancel_token: CancellationToken) -> Result<(), Error> {
 
     // Simulating client requests
 
-    for _ in 0..6 {
+    for _ in 0..10 {
         let job_request = JobRequest {
             project_id: uuid!("12341234-1234-1234-1234-123412341234"),
             post_id: uuid!("43214321-4321-4321-4321-432143214321"),

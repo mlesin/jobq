@@ -9,7 +9,6 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum WorkMessage {
-    JobStarted(Uuid),
     JobCompleted(Uuid),
     JobFailed(Uuid, String),
 }
@@ -34,7 +33,6 @@ pub async fn start(
                     },
                     Ok(job) => {
                         // In case when we can't send response, there is no one to be notified about that, so just panic
-                        send_to_server.send(WorkMessage::JobStarted(job.id)).unwrap();
                         let job_id = job.id;
                         match process(job).await {
                             Ok(()) => {
