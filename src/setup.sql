@@ -4,7 +4,7 @@ DO
 $$
     BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'queue_status_enum') THEN
-            CREATE TYPE "queue_status_enum" as enum ('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED');
+            CREATE TYPE "queue_status_enum" as enum ('QUEUED', 'PROCESSING', 'FAILED');
         END IF;
     END
 $$;

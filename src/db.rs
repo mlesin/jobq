@@ -29,15 +29,9 @@ impl DbHandle {
     // #[instrument(name = "db.set_completed", skip_all, fields(job_id = %id))]
     pub(crate) async fn complete_job(&self, id: Uuid) -> Result<(), Error> {
         debug!(message="Set completed job status", job_id=?id);
-        sqlx::query!(
-            "UPDATE jobq \
-                SET status = 'COMPLETED', \
-                duration = extract(epoch from now() - started_at) \
-            WHERE id = $1",
-            &id
-        )
-        .execute(&*self.pool)
-        .await?;
+        sqlx::query!("DELETE FROM jobq WHERE id = $1", &id)
+            .execute(&*self.pool)
+            .await?;
 
         Ok(())
     }
