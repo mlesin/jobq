@@ -1,8 +1,8 @@
 use crate::Job;
 use anyhow::{anyhow, Error};
 use async_channel::Receiver;
-use std::{fmt::Debug, time::Duration};
-use tokio::{sync::mpsc::UnboundedSender, time::sleep};
+use std::fmt::Debug;
+use tokio::{process::Command, sync::mpsc::UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use tracing::*;
 use uuid::Uuid;
@@ -54,10 +54,27 @@ pub async fn start(
 
 #[instrument(skip(job), fields(job_id = %job.id))]
 async fn process(job: Job) -> Result<(), Error> {
-    sleep(Duration::from_millis(100)).await;
-    if job.id.as_u128() % 12 == 0 {
-        return Err(anyhow!("Simulating failure"));
-    }
+    let cmd = vec![
+        "/bin/bash",
+        "-c",
+        r#"number=$RANDOM; let "number%=6"; [ "$number" -ne 0 ] && sleep $number && echo success || (echo failure 1>&2; exit 1)"#,
+    ];
+    let cwd = ".";
 
-    Ok(())
+    if let Some(program) = cmd.first() {
+        debug!("Task \"{}\": Starting command \"{}\"", job.id, program);
+        let output = Command::new(program)
+            .args(&cmd[1..cmd.len()])
+            .current_dir(cwd)
+            .kill_on_drop(true)
+            .output()
+            .await?;
+        if output.status.success() {
+            return Ok(());
+        } else {
+            return Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)));
+        }
+    } else {
+        return Err(anyhow!("No command specified"));
+    }
 }
