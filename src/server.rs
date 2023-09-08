@@ -5,6 +5,14 @@ use anyhow::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::*;
+use uuid::Uuid;
+
+#[derive(Debug)]
+pub enum WorkResponseMessage {
+    JobCompleted(Uuid),
+    JobFailed(Uuid, String),
+    DatabaseQueueError(Error),
+}
 
 // #[instrument(level = "info")]
 pub async fn serve(
@@ -12,6 +20,7 @@ pub async fn serve(
     connect_url: String,
     workers_count: u16,
     mut recv_from_client: mpsc::UnboundedReceiver<JobRequest>,
+    send_to_client: mpsc::UnboundedSender<WorkResponseMessage>,
 ) -> Result<(), Error> {
     trace!("Connecting to db:{}", connect_url);
     let handle = DbHandle::new(&connect_url).await?;
@@ -35,8 +44,8 @@ pub async fn serve(
 
     let mut free_workers = workers_count as i64;
 
-    //TODO: Resubmit processing jobs (reset processing status to queued)
-    // let mut processing = handle.get_processing_jobs().await?;
+    // Resubmit processing jobs (reset processing status to queued)
+    handle.reset_processing_jobs().await?;
 
     loop {
         if free_workers > 0 {
@@ -62,22 +71,55 @@ pub async fn serve(
                         cancel_token.cancel();
                         break;
                     },
-                    Some(WorkMessage::Started(job_id)) => {
+                    Some(WorkMessage::JobStarted(job_id)) => {
                         debug!(message = "Starting job", job_id = ?job_id);
-                        // FIXME what to do in case of error?
-                        handle.begin_job(job_id).await?;
+                        let result = handle.begin_job(job_id).await;
+                        if let Err(err) = result {
+                            let result = send_to_client.send(WorkResponseMessage::DatabaseQueueError(err));
+                            if let Err(err) = result {
+                                error!(message = "Failed to send response to client", error = ?err);
+                                cancel_token.cancel();
+                                break;
+                            }
+                        }
                     },
-                    Some(WorkMessage::Completed(job_id)) => {
+                    Some(WorkMessage::JobCompleted(job_id)) => {
                         debug!(message = "Completed job", job_id = ?job_id);
                         free_workers += 1;
-                        // FIXME what to do in case of error?
-                        handle.complete_job(job_id).await?;
+                        let result = handle.complete_job(job_id).await;
+                        if let Err(err) = result {
+                            let result = send_to_client.send(WorkResponseMessage::DatabaseQueueError(err));
+                            if let Err(err) = result {
+                                error!(message = "Failed to send response to client", error = ?err);
+                                cancel_token.cancel();
+                                break;
+                            }
+                        }
+                        let result = send_to_client.send(WorkResponseMessage::JobCompleted(job_id));
+                        if let Err(err) = result {
+                            error!(message = "Failed to send response to client", error = ?err);
+                            cancel_token.cancel();
+                            break;
+                        }
                     },
-                    Some(WorkMessage::Failed(job_id, error_msg)) => {
+                    Some(WorkMessage::JobFailed(job_id, error_msg)) => {
                         debug!(message = "Failed job", job_id = ?job_id, error = ?error_msg);
                         free_workers += 1;
-                        // FIXME what to do in case of error?
-                        handle.fail_job(job_id, error_msg).await?;
+                        let result = handle.fail_job(job_id, &error_msg).await;
+                        if let Err(err) = result {
+                            let result = send_to_client.send(WorkResponseMessage::DatabaseQueueError(err));
+                            if let Err(err) = result {
+                                error!(message = "Failed to send response to client", error = ?err);
+                                cancel_token.cancel();
+                                break;
+                            }
+                        }
+                        let result = send_to_client.send(WorkResponseMessage::JobFailed(job_id, error_msg));
+                        if let Err(err) = result {
+                            error!(message = "Failed to send response to client", error = ?err);
+                            cancel_token.cancel();
+                            break;
+                        }
                     },
                 }
             },
@@ -91,9 +133,15 @@ pub async fn serve(
                     },
                     Some(job_request) => {
                         debug!(message = "Requested job", job_request = ?job_request);
-                        // FIXME respond with a job failed in case of database error
-                        handle.submit_job_request(&job_request).await?;
-                        // send_to_queue.send(job_request).await?;
+                        let result = handle.submit_job_request(&job_request).await;
+                        if let Err(err) = result {
+                            let result = send_to_client.send(WorkResponseMessage::DatabaseQueueError( err));
+                            if let Err(err) = result {
+                                error!(message = "Failed to send response to client", error = ?err);
+                                cancel_token.cancel();
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -106,7 +154,7 @@ pub async fn serve(
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
 
-    debug!("Server stopped.");
+    info!("Server stopped.");
 
     Ok(())
 }

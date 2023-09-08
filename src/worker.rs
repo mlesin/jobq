@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum WorkMessage {
-    Started(Uuid),
-    Completed(Uuid),
-    Failed(Uuid, String),
+    JobStarted(Uuid),
+    JobCompleted(Uuid),
+    JobFailed(Uuid, String),
 }
 
 // #[instrument(level = "info")]
@@ -29,17 +29,19 @@ pub async fn start(
             job = recv_from_queue.recv() => {
                 match job {
                     Err(err) => {
-                        error!("Error:{}", err);
+                        error!(message="Error receiving job by worker, exitting", error=?err);
+                        break;
                     },
                     Ok(job) => {
-                        send_to_server.send(WorkMessage::Started(job.id)).unwrap();
+                        // In case when we can't send response, there is no one to be notified about that, so just panic
+                        send_to_server.send(WorkMessage::JobStarted(job.id)).unwrap();
                         let job_id = job.id;
                         match process(job).await {
                             Ok(()) => {
-                                send_to_server.send(WorkMessage::Completed(job_id)).unwrap();
+                                send_to_server.send(WorkMessage::JobCompleted(job_id)).unwrap();
                             },
                             Err(err) => {
-                                send_to_server.send(WorkMessage::Failed(job_id, err.to_string())).unwrap();
+                                send_to_server.send(WorkMessage::JobFailed(job_id, err.to_string())).unwrap();
                             }
                         };
                     }
@@ -49,7 +51,7 @@ pub async fn start(
 
         }
     }
-    debug!("Worker stopped.");
+    info!("Worker stopped.");
 }
 
 #[instrument(skip(job), fields(job_id = %job.id))]
