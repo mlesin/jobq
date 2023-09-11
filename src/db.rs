@@ -88,7 +88,7 @@ impl DbHandle {
         debug!("Getting {} queued jobs", num);
         Ok(sqlx::query_as!(
             Job,
-            "SELECT id, project_id, post_id, filename, hash, mimetype, sort_order, status as \"status: _\" \
+            "SELECT id, project_id, post_id, filename, hash, mimetype, sort_order, status as \"status: _\", source_file, target_file \
             FROM jobq \
             WHERE status = 'QUEUED' \
             ORDER BY started_at asc \
@@ -103,15 +103,17 @@ impl DbHandle {
     pub(crate) async fn submit_job_request(&self, job: &JobRequest) -> Result<Uuid, Error> {
         let result = sqlx::query_scalar!(
             "INSERT INTO jobq \
-            (project_id, post_id, filename, hash, mimetype, sort_order, status) \
-            VALUES ($1, $2, $3, $4, $5, $6, 'QUEUED') \
+            (project_id, post_id, filename, hash, mimetype, sort_order, status, source_file, target_file) \
+            VALUES ($1, $2, $3, $4, $5, $6, 'QUEUED', $7, $8) \
             RETURNING id",
             &job.project_id,
             &job.post_id,
             &job.filename,
             &job.hash,
             &job.mimetype,
-            &job.sort_order
+            &job.sort_order,
+            &job.source_file,
+            &job.target_file
         )
         .fetch_one(&*self.pool)
         .await?;

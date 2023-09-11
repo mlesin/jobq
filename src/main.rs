@@ -77,6 +77,8 @@ async fn setup(cancel_token: CancellationToken) -> Result<(), Error> {
             hash: "1234567890ABCDEF1234567890ABCDEF".into(),
             mimetype: "image/jpeg".into(),
             sort_order: 1,
+            source_file: "./test/input/test.jpg".into(),
+            target_file: "./test/output/test.jpg".into(),
         };
 
         send_to_server.send(job_request)?;
@@ -115,6 +117,7 @@ async fn setup(cancel_token: CancellationToken) -> Result<(), Error> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Current dir: {:?}", env::current_dir()?);
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "jobq=DEBUG");
     }

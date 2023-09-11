@@ -13,6 +13,8 @@ pub struct JobRequest {
     pub hash: String,
     pub mimetype: String,
     pub sort_order: i16,
+    pub source_file: String,
+    pub target_file: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -25,6 +27,8 @@ pub struct Job {
     pub mimetype: String,
     pub sort_order: i16,
     pub status: Status,
+    pub source_file: String,
+    pub target_file: String,
 }
 
 #[derive(Debug, Clone, sqlx::Type)]
